@@ -30,6 +30,10 @@ object Img {
 
     /** Loads `url` into `into`; shows a soft placeholder until decoded. */
     fun load(url: String, into: ImageView) {
+        // Stamp the view with the url it should display BEFORE any early return:
+        // an in-flight request for a previous url re-checks this tag in its
+        // callback, so a stale response can never overwrite a newer image.
+        into.tag = url
         if (url.isBlank()) { into.setImageDrawable(placeholder(into)); return }
         cache.get(url)?.let { into.setImageBitmap(it); return }
         into.setImageDrawable(placeholder(into))
@@ -42,7 +46,6 @@ object Img {
                 into.post { if (into.tag == url) into.setImageBitmap(bmp) }
             }
         })
-        into.tag = url
     }
 
     private fun placeholder(v: ImageView): GradientDrawable = GradientDrawable().apply {

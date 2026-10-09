@@ -70,7 +70,10 @@ object TmdbApi {
      *  Person results are dropped; each result carries a small poster url. */
     suspend fun searchAll(key: String, query: String, lang: String): List<Show> =
         withContext(Dispatchers.IO) {
-            val url = "$BASE/search/multi?api_key=$key&language=$lang&query=$query&page=1"
+            // Encode the free-text query: titles containing '&' or '#' would
+            // otherwise split the URL into extra params / a fragment.
+            val q = java.net.URLEncoder.encode(query, "UTF-8")
+            val url = "$BASE/search/multi?api_key=$key&language=$lang&query=$q&page=1"
             val root = get(url)
             val arr = root.optJSONArray("results") ?: return@withContext emptyList()
             val out = mutableListOf<Show>()

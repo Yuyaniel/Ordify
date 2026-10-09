@@ -2,6 +2,7 @@ package com.quarkemby.app.data
 
 import android.content.Context
 import android.content.SharedPreferences
+import android.util.Log
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 import com.quarkemby.app.data.models.JobLogEntry
@@ -27,15 +28,36 @@ object Prefs {
 
     fun init(context: Context) {
         appContext = context.applicationContext
-        val mk = MasterKey.Builder(appContext)
-            .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
-            .build()
-        secure = EncryptedSharedPreferences.create(
-            appContext, SECURE, mk,
-            EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-            EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
-        )
         plain = appContext.getSharedPreferences(PLAIN, Context.MODE_PRIVATE)
+        // Never let a keystore hiccup crash the app during startup: retry once
+        // with a clean slate, then degrade to plain storage so the UI still runs.
+        secure = openSecurePrefs() ?: plain.also {
+            Log.e("Prefs", "加密存储不可用，已降级为普通存储（凭证不再加密）")
+        }
+    }
+
+    /**
+     * Opens the encrypted store, recovering from a corrupted entry by wiping and
+     * recreating it once. Returns null when encryption stays unusable so [init]
+     * can degrade instead of throwing at startup.
+     */
+    private fun openSecurePrefs(): SharedPreferences? {
+        repeat(2) { attempt ->
+            try {
+                val mk = MasterKey.Builder(appContext)
+                    .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+                    .build()
+                return EncryptedSharedPreferences.create(
+                    appContext, SECURE, mk,
+                    EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+                    EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
+                )
+            } catch (t: Throwable) {
+                Log.e("Prefs", "加密存储初始化失败（第 ${attempt + 1} 次）", t)
+                if (attempt == 0) runCatching { appContext.deleteSharedPreferences(SECURE) }
+            }
+        }
+        return null
     }
 
     // ---- Quark credentials ----

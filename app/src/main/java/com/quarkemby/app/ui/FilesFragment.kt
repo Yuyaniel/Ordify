@@ -183,8 +183,8 @@ class FilesFragment : Fragment() {
             navStack.clear(); nameStack.clear(); currentFid = ""
         } else {
             val j = segIdx - 1
-            if (j >= nameStack.size - 1) return // already there
-            val targetFid = if (j == nameStack.size - 1) currentFid else navStack[j + 1]
+            if (j >= nameStack.size - 1) return // already at (or past) this segment
+            val targetFid = navStack[j + 1]
             while (nameStack.size > j + 1) {
                 nameStack.removeAt(nameStack.size - 1)
                 navStack.removeAt(navStack.size - 1)
@@ -206,13 +206,13 @@ class FilesFragment : Fragment() {
         try {
             val items = QuarkApi.list(currentFid)
             loadedItems = sort(items)
-            adapter.submit(loadedItems)
+            adapter.submitList(loadedItems)
             if (_b != null) {
                 b.emptyView.visibility = if (loadedItems.isEmpty()) View.VISIBLE else View.GONE
             }
         } catch (e: Exception) {
             if (e.message?.contains("失效") == true) {
-                MainActivity.INSTANCE.showLogin()
+                MainActivity.INSTANCE?.showLogin()
             } else if (_b != null) {
                 b.errorView.text = e.message ?: "加载失败"
                 b.errorView.visibility = View.VISIBLE
@@ -256,7 +256,7 @@ class FilesFragment : Fragment() {
                 val (k, asc, _) = opts[which]
                 Prefs.sortKey = k; Prefs.sortAsc = asc
                 loadedItems = sort(loadedItems)
-                adapter.submit(loadedItems)
+                adapter.submitList(loadedItems)
                 d.dismiss()
                 toast("已排序")
             }

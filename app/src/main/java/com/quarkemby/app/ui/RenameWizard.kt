@@ -799,13 +799,12 @@ class RenameWizard(ctx: Context, private val folder: FileItem) : Dialog(ctx) {
             })
         } else {
             root.addView(button("重命名勾选的项目") {
-                if (!cbFileRename.isChecked && folderCb?.isChecked != true) {
-                    toast("请至少勾选一种重命名"); return@button
-                }
-                val chosen = when {
-                    !cbFileRename.isChecked -> emptySet()
-                    checked.isNotEmpty() -> checked
-                    else -> actionable.toSet()
+                // An empty selection means "change nothing" — honour it literally.
+                // (Previously an empty set fell back to "all actionable", so a user
+                //  who unchecked every row silently ran the whole batch.)
+                val chosen = if (cbFileRename.isChecked) checked.toSet() else emptySet()
+                if (chosen.isEmpty() && folderCb?.isChecked != true) {
+                    toast("请至少勾选一个要执行的项目"); return@button
                 }
                 execute(p, chosen, folderCb?.isChecked == true)
             })
@@ -853,7 +852,14 @@ class RenameWizard(ctx: Context, private val folder: FileItem) : Dialog(ctx) {
                 val fname = Prefs.seasonTemplate.replace("{ss}", EpisodeParser.pad(si + 1))
                 status.text = "创建文件夹 $fname …"
                 try {
-                    seasonFids[fname] = existingFolders[fname]?.fid ?: QuarkApi.createFolder(folder.fid, fname)
+                    // Only ever cache a NON-BLANK fid. QuarkApi.move() normalises a
+                    // blank destination to "0" (root), so caching the empty string
+                    // returned by a create-folder whose response shape changed would
+                    // move every file out of the show folder into the drive root.
+                    val fid = existingFolders[fname]?.fid?.takeIf { it.isNotBlank() }
+                        ?: QuarkApi.createFolder(folder.fid, fname)
+                    if (fid.isNotBlank()) seasonFids[fname] = fid
+                    else status.text = "创建 $fname 失败：未取得目录 id，已跳过移动"
                 } catch (e: Exception) {
                     status.text = "创建 $fname 失败：${e.message}"
                 }
@@ -868,7 +874,7 @@ class RenameWizard(ctx: Context, private val folder: FileItem) : Dialog(ctx) {
                     val file = fidByName[a.oldName] ?: throw Exception("本地记录缺失")
                     if (a.needsRename) QuarkApi.rename(file.fid, a.newName)
                     val seasonName = Prefs.seasonTemplate.replace("{ss}", EpisodeParser.pad(a.seasonIdx + 1))
-                    val sFid = seasonFids[seasonName]
+                    val sFid = seasonFids[seasonName]?.takeIf { it.isNotBlank() }
                     if (a.needsMove && sFid != null) QuarkApi.move(listOf(file.fid), sFid)
                     success.add(a.newName.ifEmpty { a.oldName })
                 } catch (e: Exception) {

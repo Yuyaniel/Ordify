@@ -43,6 +43,11 @@ class LogFragment : Fragment() {
     }
 
     override fun onViewCreated(view: View, s: Bundle?) {
+        render()
+    }
+
+    /** (Re)builds the whole page; also used to refresh after clearing. */
+    private fun render() {
         root.removeAllViews()
 
         // title row: "任务日志" on the left, clear-all action on the right
@@ -67,7 +72,7 @@ class LogFragment : Fragment() {
                 )
                 setOnClickListener {
                     Prefs.clearLogEntries()
-                    onViewCreated(view, s)
+                    render()
                 }
             })
         })
@@ -103,7 +108,7 @@ class LogFragment : Fragment() {
             })
             card.addView(Ui.secondaryTextBtn(requireContext(), "清除崩溃记录") {
                 CrashLog.clear(requireContext())
-                onViewCreated(view, s)
+                render()
             })
             root.addView(card)
         }

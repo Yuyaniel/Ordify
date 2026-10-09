@@ -20,7 +20,12 @@ class MainActivity : AppCompatActivity() {
 
     companion object {
         const val LOGIN_URL = "https://pan.quark.cn/"
-        lateinit var INSTANCE: MainActivity
+
+        /** Host handle used by fragments. Nulled in onDestroy so a destroyed
+         *  activity is never used to commit a fragment transaction. */
+        @Volatile
+        var INSTANCE: MainActivity? = null
+            private set
     }
 
     private lateinit var container: FrameLayout
@@ -85,6 +90,9 @@ class MainActivity : AppCompatActivity() {
 
     fun onLoggedIn() {
         showBottomNav(true)
+        // keep the bottom pill in sync: without this the Files tab stays idle
+        // (both tabs unhighlighted) after the login -> files transition
+        highlightTab(R.id.nav_files)
         addFragment(FilesFragment(), false, "files")
     }
 
@@ -147,5 +155,12 @@ class MainActivity : AppCompatActivity() {
 
     private fun showBottomNav(show: Boolean) {
         bottomNav.visibility = if (show) android.view.View.VISIBLE else android.view.View.GONE
+    }
+
+    override fun onDestroy() {
+        // Drop the static handle so a finishing activity can be collected and is
+        // never reused for a fragment transaction.
+        if (INSTANCE === this) INSTANCE = null
+        super.onDestroy()
     }
 }

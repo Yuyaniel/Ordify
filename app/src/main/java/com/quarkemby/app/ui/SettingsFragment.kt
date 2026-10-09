@@ -21,7 +21,7 @@ import kotlinx.coroutines.launch
 
 /**
  * Settings screen: season-folder template, debug (preview-only) toggle,
- * home folder, job log, and logout.
+ * custom Quark request headers, home folder, job log, and logout.
  */
 class SettingsFragment : Fragment() {
 
@@ -105,22 +105,32 @@ class SettingsFragment : Fragment() {
             root.addView(spacer())
         }
 
+        // ---- Advanced: custom Quark request headers ----
+        root.addView(section("自定义请求头（高级）"))
+        root.addView(hint("形如 k=v,k2=v2，会附加到所有夸克接口请求；接口签名变化时可在此补充设备头，留空表示不使用。"))
+        val headerInput = field().apply {
+            hint = "k=v,k2=v2"
+            setText(Prefs.quarkDeviceHeaders)
+        }
+        root.addView(headerInput); root.addView(spacer())
+
         // ---- Actions ----
         root.addView(primary("保存设置") {
             Prefs.tmdbKey = keyInput.text.toString().trim()
             Prefs.tmdbLanguage = langInput.text.toString().trim().ifEmpty { "zh-CN" }
             Prefs.seasonTemplate = seasonInput.text.toString().trim().ifEmpty { "Season {ss}" }
+            Prefs.quarkDeviceHeaders = headerInput.text.toString().trim()
             Prefs.previewOnly = previewBox.isChecked
             toast("设置已保存")
         })
 
         root.addView(secondary("查看任务日志") {
-            MainActivity.INSTANCE.showLog()
+            MainActivity.INSTANCE?.showLog()
         })
 
         root.addView(danger("退出登录") {
             Prefs.clearCredentials()
-            MainActivity.INSTANCE.showLogin()
+            MainActivity.INSTANCE?.showLogin()
         })
     }
 

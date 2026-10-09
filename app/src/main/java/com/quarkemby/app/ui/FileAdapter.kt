@@ -5,26 +5,35 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.ImageView
 import android.widget.TextView
+import androidx.recyclerview.widget.DiffUtil
+import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
 import com.quarkemby.app.R
 import com.quarkemby.app.data.models.FileItem
 
 /**
+ * Identity/content diff for the file list: rows are keyed by fid, so a refresh
+ * only rebinds what actually changed.
+ */
+private val FILE_DIFF = object : DiffUtil.ItemCallback<FileItem>() {
+    override fun areItemsTheSame(oldItem: FileItem, newItem: FileItem): Boolean =
+        oldItem.fid == newItem.fid
+
+    override fun areContentsTheSame(oldItem: FileItem, newItem: FileItem): Boolean =
+        oldItem == newItem
+}
+
+/**
  * Adapter for the drive file list. Simple two-mode interaction:
  * tap opens a folder, long-press opens the context menu.
+ *
+ * Backed by [ListAdapter], so a refresh / re-sort diffs the new list against the
+ * old one instead of rebinding every row (no full-list flicker).
  */
 class FileAdapter(
     private val onClick: (FileItem) -> Unit,
     private val onLongClick: (FileItem) -> Unit
-) : RecyclerView.Adapter<FileAdapter.VH>() {
-
-    private val items = mutableListOf<FileItem>()
-
-    fun submit(list: List<FileItem>) {
-        items.clear()
-        items.addAll(list)
-        notifyDataSetChanged()
-    }
+) : ListAdapter<FileItem, FileAdapter.VH>(FILE_DIFF) {
 
     fun formatSize(bytes: Long): String {
         if (bytes <= 0) return ""
@@ -44,10 +53,8 @@ class FileAdapter(
     override fun onCreateViewHolder(p: ViewGroup, vt: Int): VH =
         VH(LayoutInflater.from(p.context).inflate(R.layout.item_file, p, false))
 
-    override fun getItemCount(): Int = items.size
-
     override fun onBindViewHolder(h: VH, pos: Int) {
-        val item = items[pos]
+        val item = getItem(pos)
         h.icon.setImageResource(iconRes(item))
         h.name.text = item.name
         h.meta.text = when {

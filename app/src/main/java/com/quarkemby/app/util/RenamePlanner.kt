@@ -27,7 +27,9 @@ object RenamePlanner {
         epTitles: Map<Int, String>? = null
     ): PlanResult {
         val videos = items.filter { it.isVideo }
-        val subs = items.filter { it.isSubtitle }
+        // Candidate subtitles are CONSUMED on match (see takeMatchingSubtitle) so
+        // one subtitle file can never be attached to two different videos.
+        val remainingSubs = items.filter { it.isSubtitle }.toMutableList()
 
         // Parse episodes for each video: pair (parsedSeason, ep)
         val parsedVideos = videos.mapNotNull { v ->
@@ -36,7 +38,7 @@ object RenamePlanner {
         }
 
         val actions = mutableListOf<RenameAction>()
-        val usedTargets = HashMap<String, FileItem>() // base+season -> source
+        val usedTargets = HashMap<String, FileItem>() // "season|episode" -> first source
         val seasonsUsed = HashSet<Int>()
 
         // Map videos
@@ -51,7 +53,12 @@ object RenamePlanner {
                 title
             )
             val newName = newBase + video.ext
-            val key = "${season}|${newName.lowercase()}"
+            // Conflict key is season+episode ONLY — the extension is deliberately
+            // excluded. Two files resolving to the same episode number occupy the
+            // same Emby slot even when their containers differ (.mp4 vs .mkv), so
+            // the duplicate must be flagged instead of silently emitting two files
+            // for one episode.
+            val key = "$season|${parsed.episode}"
             val conflict = usedTargets.containsKey(key)
             if (conflict) {
                 // keep first, mark this one as conflict (skip from plan)
@@ -70,10 +77,8 @@ object RenamePlanner {
                     error = if (conflict) "与已有条目集号冲突，请手动修正" else ""
                 )
             )
-            // attach matching subtitle
-            val sub = subs.firstOrNull {
-                it.name.startsWith(baseNoExt, ignoreCase = true) || baseNoExt.startsWith(it.name.substringBeforeLast('.'), ignoreCase = true)
-            }
+            // attach matching subtitle (one-to-one, exact base preferred)
+            val sub = takeMatchingSubtitle(baseNoExt, remainingSubs)
             if (sub != null) {
                 actions.add(
                     RenameAction(
@@ -120,7 +125,7 @@ object RenamePlanner {
      */
     fun buildMovie(items: List<FileItem>, movieName: String): PlanResult {
         val videos = items.filter { it.isVideo }.sortedBy { it.name.lowercase() }
-        val subs = items.filter { it.isSubtitle }
+        val remainingSubs = items.filter { it.isSubtitle }.toMutableList()
 
         val actions = mutableListOf<RenameAction>()
         val usedTargets = HashSet<String>()
@@ -141,12 +146,9 @@ object RenamePlanner {
                     error = if (conflict) "目标名称冲突，请手动修正" else ""
                 )
             )
-            // attach matching subtitle (same prefix rule as TV mode)
+            // attach matching subtitle (same one-to-one rule as TV mode)
             val baseNoExt = v.name.substringBeforeLast('.')
-            val sub = subs.firstOrNull {
-                it.name.startsWith(baseNoExt, ignoreCase = true) ||
-                    baseNoExt.startsWith(it.name.substringBeforeLast('.'), ignoreCase = true)
-            }
+            val sub = takeMatchingSubtitle(baseNoExt, remainingSubs)
             if (sub != null) {
                 actions.add(
                     RenameAction(
@@ -163,8 +165,7 @@ object RenamePlanner {
         }
 
         // subtitles that matched no video: keep them visible with a reason
-        val matchedSubs = actions.filter { it.isSubtitle }.map { it.oldName }.toSet()
-        subs.filter { it.name !in matchedSubs }.forEach {
+        remainingSubs.forEach {
             actions.add(
                 RenameAction(
                     oldName = it.name, newName = "", seasonIdx = 0,
@@ -175,6 +176,25 @@ object RenamePlanner {
         }
 
         return PlanResult(actions, emptyList())
+    }
+
+    /**
+     * Picks and CONSUMES the subtitle belonging to [videoBase], preferring an
+     * exact base-name match and only then falling back to a prefix pairing
+     * (video "Show.01.1080p" + subtitle "Show.01.ass"). Removing the match from
+     * [remaining] keeps the pairing one-to-one, so a single subtitle file is
+     * never renamed twice by two different videos.
+     */
+    private fun takeMatchingSubtitle(
+        videoBase: String, remaining: MutableList<FileItem>
+    ): FileItem? {
+        val picked = remaining.firstOrNull {
+            it.name.substringBeforeLast('.').equals(videoBase, ignoreCase = true)
+        } ?: remaining.firstOrNull {
+            videoBase.startsWith(it.name.substringBeforeLast('.'), ignoreCase = true)
+        }
+        if (picked != null) remaining.remove(picked)
+        return picked
     }
 
     /** Formats a single Emby-style file base name using the user template. */

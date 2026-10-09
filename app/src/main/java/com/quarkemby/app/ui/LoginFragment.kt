@@ -44,7 +44,7 @@ class LoginFragment : Fragment() {
                 return@setOnClickListener
             }
             Prefs.quarkCookies = raw
-            MainActivity.INSTANCE.onLoggedIn()
+            MainActivity.INSTANCE?.onLoggedIn()
         }
     }
 

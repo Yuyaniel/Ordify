@@ -16,7 +16,13 @@ class QuarkEmbyApp : Application() {
         val prev = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { t, e ->
             runCatching { CrashLog.write(this, "fatal/${t.name}", e) }
-            prev?.uncaughtException(t, e)
+            if (prev != null) {
+                prev.uncaughtException(t, e)
+            } else {
+                // No system handler to delegate to: rethrow so the runtime still
+                // terminates the process instead of swallowing the crash.
+                throw e
+            }
         }
     }
 }

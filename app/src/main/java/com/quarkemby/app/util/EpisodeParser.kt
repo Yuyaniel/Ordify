@@ -71,6 +71,9 @@ object EpisodeParser {
         // 7) separator + number near the end (九门.30 / Show - 12 / 30v2)
         sepNum.findAll(stripped).lastOrNull()?.let {
             val v = it.groupValues[1].toInt()
+            // 0 is kept on purpose: Emby/Jellyfin use episode 0 for specials
+            // (S00E00), and rejecting it here would be inconsistent with the
+            // trailing-digits / broad-fallback steps below.
             if (v in 0..999) return Result(1, v)
         }
 

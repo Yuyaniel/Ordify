@@ -34,6 +34,10 @@ import java.util.concurrent.TimeUnit
 object QuarkApi {
     private const val BASE_PC = "https://drive-pc.quark.cn/1/clouddrive"
     private const val TAG = "QuarkApi"
+    /** Page size requested from the file listing endpoint. */
+    private const val PAGE_SIZE = 200
+    /** Hard cap on pages per listing: bounds a server that ignores `_page`. */
+    private const val MAX_LIST_PAGES = 50
     private val JSON = "application/json; charset=utf-8".toMediaType()
     private val UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) " +
             "quark-cloud-drive/3.14.2 Chrome/120.0.0.0 Electron/24.1.3.8 Safari/537.36 Channel/pckk_other_ch"
@@ -116,39 +120,59 @@ object QuarkApi {
         return json
     }
 
-    /** List children of `parentFid` (empty/"0" = root). Returns folders first. */
+    /**
+     * List children of `parentFid` (empty/"0" = root). Returns folders first.
+     *
+     * Paging: requests `_page = 1, 2, …` until a page comes back short, until a
+     * page adds nothing new, or until [MAX_LIST_PAGES]. Entries are de-duplicated
+     * by fid, so a server that ignores `_page` (or an `fetch_all_file` that already
+     * returns everything) can neither duplicate rows nor loop forever.
+     */
     suspend fun list(parentFid: String): List<FileItem> = withContext(Dispatchers.IO) {
         val pid = if (parentFid.isBlank() || parentFid == "0") "0" else parentFid
-        val json = get("/file/sort", linkedMapOf(
-            "pr" to "ucpro", "fr" to "pc", "uc_param_str" to "",
-            "pdir_fid" to pid,
-            "_page" to "1", "_size" to "200",
-            "_fetch_total" to "1", "_fetch_sub_dirs" to "0",
-            "_sort" to "file_type:asc,updated_at:desc",
-            "_fetch_full_path" to "0",
-            "fetch_all_file" to "1",
-            "fetch_risk_file_name" to "1"
-        ))
-        val data = json.optJSONObject("data") ?: JSONObject()
-        // list may be either an array directly or an array of {files: [...]}
-        val list = data.optJSONArray("list") ?: JSONArray()
         val out = mutableListOf<FileItem>()
-        for (i in 0 until list.length()) {
-            val it = list.optJSONObject(i) ?: continue
-            // when wrapped: {file_type, files:[...]}; unwrap if files present
-            val filesArr = it.optJSONArray("files")
-            if (filesArr != null && filesArr.length() > 0) {
-                for (j in 0 until filesArr.length()) parseItem(filesArr.optJSONObject(j) ?: continue, out)
-            } else {
-                parseItem(it, out)
+        val seenFids = HashSet<String>()
+        var page = 1
+        var firstRaw = ""
+        while (true) {
+            val json = get("/file/sort", linkedMapOf(
+                "pr" to "ucpro", "fr" to "pc", "uc_param_str" to "",
+                "pdir_fid" to pid,
+                "_page" to page.toString(), "_size" to PAGE_SIZE.toString(),
+                "_fetch_total" to "1", "_fetch_sub_dirs" to "0",
+                "_sort" to "file_type:asc,updated_at:desc",
+                "_fetch_full_path" to "0",
+                "fetch_all_file" to "1",
+                "fetch_risk_file_name" to "1"
+            ))
+            if (page == 1) firstRaw = json.toString().take(500)
+            val data = json.optJSONObject("data") ?: JSONObject()
+            // list may be either an array directly or an array of {files: [...]}
+            val list = data.optJSONArray("list") ?: JSONArray()
+            var added = 0
+            for (i in 0 until list.length()) {
+                val it = list.optJSONObject(i) ?: continue
+                // when wrapped: {file_type, files:[...]}; unwrap if files present
+                val filesArr = it.optJSONArray("files")
+                if (filesArr != null && filesArr.length() > 0) {
+                    for (j in 0 until filesArr.length()) {
+                        if (parseItem(filesArr.optJSONObject(j) ?: continue, out, seenFids)) added++
+                    }
+                } else {
+                    if (parseItem(it, out, seenFids)) added++
+                }
             }
+            if (added < PAGE_SIZE || page >= MAX_LIST_PAGES) break
+            page++
         }
+        if (out.isEmpty()) Log.w(TAG, "list($pid) empty. raw=$firstRaw")
+        // sortedWith returns a NEW list, it is not in-place: the result must be
+        // the lambda's last expression, otherwise the sort is silently dropped.
         out.sortedWith(compareBy({ !it.isFolder }, { it.name.lowercase() }))
-        if (out.isEmpty()) Log.w(TAG, "list($pid) empty. raw=${json.toString().take(500)}")
-        out
     }
 
-    private fun parseItem(it: JSONObject, out: MutableList<FileItem>) {
+    /** Parses one raw entry into [out]; returns true when a NEW item was added. */
+    private fun parseItem(it: JSONObject, out: MutableList<FileItem>, seen: MutableSet<String>): Boolean {
         // dir is reported as boolean true/1 on the PC API; be tolerant of all forms.
         val isDir = when (val d = it.opt("dir")) {
             is Boolean -> d
@@ -158,7 +182,8 @@ object QuarkApi {
         }
         val name = it.optString("file_name", "")
         val fid = it.optString("fid", "")
-        if (fid.isEmpty() || name.isEmpty()) return
+        if (fid.isEmpty() || name.isEmpty()) return false
+        if (!seen.add(fid)) return false   // already collected on an earlier page
         out.add(
             FileItem(
                 fid = fid,
@@ -169,6 +194,7 @@ object QuarkApi {
                 updatedAt = parseTime(it)
             )
         )
+        return true
     }
 
     /** Parse update time; API often returns seconds, sometimes millis. */
@@ -203,7 +229,13 @@ object QuarkApi {
         post("/file/rename?pr=ucpro&fr=pc&uc_param_str=", body)
     }
 
-    /** Move files into a destination folder by fid. */
+    /**
+     * Move files into a destination folder by fid.
+     *
+     * NOTE: a blank [dstFid] is normalised to `"0"` = the drive ROOT. Callers
+     * that resolve a folder id from a create/list response must reject a blank
+     * id themselves rather than passing it through here.
+     */
     suspend fun move(fids: List<String>, dstFid: String) = withContext(Dispatchers.IO) {
         val arr = JSONArray()
         fids.forEach { arr.put(it) }
